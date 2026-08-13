@@ -1,0 +1,15 @@
+# --- Core backend (always needed) -------------------------------------------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+requests==2.32.3
+pyserial==3.5
+numpy==1.26.4
+opencv-python==4.10.0.84
+
+# --- Local ML model ----------------------------------------------------------
+# On Apple Silicon Macs use: pip install tensorflow-macos
+# On Windows / Intel:        pip install tensorflow
+tensorflow==2.16.2
+
+# --- Optional: Firebase Realtime Database logging ----------------------------
+# firebase-admin==6.5.0

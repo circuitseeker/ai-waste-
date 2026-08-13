@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Waste Segregation</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♻️</text></svg>">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">♻️</span>
+      <div>
+        <h1>Waste Segregation</h1>
+        <p class="subtitle">AI-powered dry / wet sorting</p>
+      </div>
+    </div>
+    <div class="pills">
+      <span id="pill-hardware" class="pill">Hardware —</span>
+      <span id="pill-model" class="pill">Model —</span>
+      <span id="pill-conn" class="pill pill-warn">Connecting…</span>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- Live camera -->
+    <section class="card cam-card">
+      <div class="card-head">
+        <h2>Live Camera</h2>
+        <span class="tag" id="cam-source">ESP32-CAM</span>
+      </div>
+      <div class="cam-wrap">
+        <img id="cam" alt="camera feed">
+        <div id="cam-overlay" class="cam-overlay"></div>
+      </div>
+    </section>
+
+    <!-- Latest result -->
+    <section class="card result-card" id="result-card">
+      <div class="card-head"><h2>Latest Result</h2></div>
+      <div class="result-body">
+        <div class="result-icon" id="result-icon">⏳</div>
+        <div class="result-label" id="result-label">Waiting for an item…</div>
+        <div class="confbar"><div class="confbar-fill" id="confbar-fill"></div></div>
+        <div class="conf-text" id="conf-text">—</div>
+        <div class="result-time" id="result-time"></div>
+      </div>
+    </section>
+
+    <!-- Counts -->
+    <section class="card stats-card">
+      <div class="card-head"><h2>Sorted Today</h2></div>
+      <div class="stats" id="stats">
+        <div class="stat">
+          <div class="stat-num" id="count-dry">0</div>
+          <div class="stat-label">Dry / Paper</div>
+        </div>
+        <div class="stat">
+          <div class="stat-num" id="count-wet">0</div>
+          <div class="stat-label">Wet</div>
+        </div>
+        <div class="stat">
+          <div class="stat-num" id="count-total">0</div>
+          <div class="stat-label">Total</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Controls -->
+    <section class="card controls-card">
+      <div class="card-head"><h2>Controls</h2></div>
+      <div class="controls">
+        <button class="btn btn-primary" id="btn-toggle">Pause</button>
+        <button class="btn" id="btn-trigger">Simulate Item</button>
+        <button class="btn btn-ghost" id="btn-reset">Reset Counts</button>
+      </div>
+      <p class="hint" id="hint"></p>
+    </section>
+
+    <!-- History -->
+    <section class="card history-card">
+      <div class="card-head"><h2>Recent Activity</h2></div>
+      <ul class="history" id="history">
+        <li class="history-empty">No activity yet.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

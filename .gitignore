@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Model artifacts & secrets
+model/*.h5
+model/*.tflite
+model/saved_model/
+model/firebase_key.json
+train/data/
+
+# Captured test images
+captures/
+
+# OS
+.DS_Store
