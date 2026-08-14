@@ -21,6 +21,15 @@ import numpy as np
 from . import config
 
 
+def _clip_embed(out):
+    """
+    Return CLIP's projected embedding tensor from get_text_features /
+    get_image_features. transformers < 5 returns the tensor directly; >= 5
+    wraps it in an output object whose `.pooler_output` IS that tensor.
+    """
+    return out if hasattr(out, "norm") else out.pooler_output
+
+
 @dataclass
 class Prediction:
     label: str          # human label, e.g. "Aluminium can · Recyclable"
@@ -29,6 +38,7 @@ class Prediction:
     scores: dict        # every class name -> score
     source: str         # "clip" | "model" | "heuristic"
     category: str = ""  # waste category, e.g. "Recyclable"
+    name: str = ""      # clean item name, e.g. "Plastic bottle" (no decoration)
     bin_confidence: float = 0.0   # how strongly the winning BIN won (see BIN_VOTE)
 
 
@@ -109,7 +119,7 @@ class Classifier:
                     text = [t.format(p) for p in phrases for t in templates]
                     tok = processor(text=text, return_tensors="pt", **self._text_pad)
                     tok = {k: v.to(device) for k, v in tok.items()}
-                    f = model.get_text_features(**tok)
+                    f = _clip_embed(model.get_text_features(**tok))
                     f = f / f.norm(dim=-1, keepdim=True)
                     f = f.mean(dim=0)
                     per_class.append(f / f.norm())
@@ -208,7 +218,7 @@ class Classifier:
                     views.extend(self._views(rgb))
                 inp = processor(images=views, return_tensors="pt")
                 inp = {k: v.to(device) for k, v in inp.items()}
-                f = model.get_image_features(**inp)
+                f = _clip_embed(model.get_image_features(**inp))
                 f = f / f.norm(dim=-1, keepdim=True)
                 f = f.mean(dim=0)
                 proto_feats.append(f / f.norm())
@@ -358,7 +368,7 @@ class Classifier:
         inp = self._processor(images=views, return_tensors="pt")
         inp = {k: v.to(self._device) for k, v in inp.items()}
         with torch.no_grad():
-            img_feats = self._clip_model.get_image_features(**inp)
+            img_feats = _clip_embed(self._clip_model.get_image_features(**inp))
             img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
             logits = (img_feats @ self._text_feats.T) * self._clip_model.logit_scale.exp()
             # Score each view separately, then average the PROBABILITIES.
@@ -444,6 +454,7 @@ class Classifier:
                 scores=scores,
                 source=source,
                 category=cls["category"],
+                name=cls["name"],
                 bin_confidence=bin_conf,
             )
 
@@ -462,4 +473,6 @@ class Classifier:
             confidence=conf,
             scores={labels[i]: float(probs[i]) for i in range(len(labels))},
             source=source,
+            category="",   # legacy Keras/heuristic path has no category
+            name=label,
         )

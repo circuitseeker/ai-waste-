@@ -106,45 +106,62 @@ class SerialHardware(HardwareBase):
         import serial  # pyserial
         from serial.tools import list_ports
 
-        port = config.SERIAL_PORT
-        if not port:
-            port = self._autodetect(list_ports)
-        if not port:
+        self._serial = serial
+        ports = [config.SERIAL_PORT] if config.SERIAL_PORT else self._candidates(list_ports)
+        if not ports:
             raise RuntimeError("no serial port found (set SERIAL_PORT)")
 
-        self._ser = serial.Serial()
-        self._ser.port = port
-        self._ser.baudrate = config.SERIAL_BAUD
-        self._ser.timeout = 5
+        # Try each candidate and keep the one whose firmware answers PONG. This
+        # is what lets us coexist with the OLED board on another serial port.
+        last_err = "none"
+        for port in ports:
+            try:
+                ser = self._open(port)
+                if self._ping(ser):
+                    self._ser = ser
+                    self._port = port
+                    print(f"[hardware] ESP32-CAM (serial) on {port} @ {config.SERIAL_BAUD} baud.")
+                    return
+                ser.close()
+                last_err = f"no PONG on {port}"
+            except Exception as exc:  # noqa: BLE001
+                last_err = f"{port}: {exc}"
+        raise RuntimeError(f"no ESP32-CAM serial firmware found ({last_err})")
+
+    def _open(self, port: str):
+        s = self._serial.Serial()
+        s.port = port
+        s.baudrate = config.SERIAL_BAUD
+        s.timeout = 5
         # Don't drive DTR/RTS — on this board RTS is wired to EN (reset) and
         # DTR to GPIO0, so asserting them would hold the ESP32 in reset.
-        self._ser.dtr = False
-        self._ser.rts = False
-        self._ser.open()
-        self._port = port
+        s.dtr = False
+        s.rts = False
+        s.open()
         time.sleep(2.0)                 # allow the ESP32 to reset & boot
-        self._ser.reset_input_buffer()
-        # Confirm it's our firmware.
-        self._ser.write(b"P")
-        if b"PONG" not in self._ser.readline():
-            # give it one more shot after boot noise
-            self._ser.reset_input_buffer()
-            self._ser.write(b"P")
-            if b"PONG" not in self._ser.readline():
-                raise RuntimeError(f"no ESP32 serial firmware responding on {port}")
-        print(f"[hardware] ESP32-CAM (serial) on {port} @ {config.SERIAL_BAUD} baud.")
+        s.reset_input_buffer()
+        return s
 
     @staticmethod
-    def _autodetect(list_ports) -> str:
-        candidates = []
+    def _ping(ser) -> bool:
+        for _ in range(2):
+            ser.reset_input_buffer()
+            ser.write(b"P")
+            if b"PONG" in ser.readline():
+                return True
+        return False
+
+    @staticmethod
+    def _candidates(list_ports) -> list:
+        out = []
         for p in list_ports.comports():
             name = (p.device or "")
             low = name.lower()
             if any(k in low for k in ("usbserial", "wchusbserial", "slab",
                                       "usbmodem", "ttyusb", "ttyacm")) or \
                low.startswith("com"):
-                candidates.append(name)
-        return candidates[0] if candidates else ""
+                out.append(name)
+        return out
 
     def _read_exact(self, n: int) -> bytes:
         buf = b""
