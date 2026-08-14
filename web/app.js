@@ -121,8 +121,16 @@ function showResult(r) {
   el.confFill.style.width = pct + "%";
   el.confFill.style.background = isWet
     ? "var(--wet)" : "var(--dry)";
+  // r.source is "clip" | "model" | "heuristic". The old two-way check treated
+  // anything that was not "model" as the colour heuristic, so the normal CLIP
+  // path — the one that actually runs — reported itself as "heuristic".
+  const SOURCE_NAMES = {
+    clip: "CLIP zero-shot",
+    model: "local model",
+    heuristic: "colour heuristic (no model)",
+  };
   el.confText.textContent =
-    `${pct}% confidence · ${r.source === "model" ? "local model" : "heuristic"}`;
+    `${pct}% confidence · ${SOURCE_NAMES[r.source] || r.source}`;
   el.resultTime.textContent = r.time.replace("T", " ");
 
   if (r.counts) updateCounts(r.counts);

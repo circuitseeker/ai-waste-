@@ -136,7 +136,10 @@ function addItem(it, prepend) {
 async function refresh() {
   try {
     const r = await fetch('/shots');
-    const items = await r.json();
+    // The endpoint replies {"shots": [...]}, not a bare array — reading
+    // .length off the wrapper gave undefined, so the gallery showed
+    // "No captures yet" even with a folder full of them.
+    const items = (await r.json()).shots || [];
     gallery.innerHTML = '';
     if (!items.length) {
       gallery.innerHTML = '<div class="empty">No captures yet. Click 📷 Capture.</div>';
