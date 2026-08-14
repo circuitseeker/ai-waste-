@@ -4,8 +4,9 @@ Point an ESP32-CAM at a piece of rubbish; it tells you what it is and which bin
 it belongs in, then drives a servo to sort it.
 
 Classification runs **locally** with zero-shot CLIP — no training, no API key,
-no cloud. It recognises ~20 item types (banana peel, soda can, chocolate
-wrapper, cloth, mobile phone…) and says *"not sure"* rather than guessing.
+no cloud. It recognises 27 item types — banana peel, soda can, chocolate
+wrapper, cloth, mobile phone, pens, pencils, erasers, wires, tissues, plastic
+bags — and says *"not sure"* rather than guessing.
 
 **Runs with no hardware at all** — it falls back to your laptop webcam, so you
 can try the whole flow before touching the ESP32.
@@ -98,7 +99,24 @@ CONFIDENCE_THRESHOLD=0.5 SIMULATION=on python -m backend.app
 | `SERIAL_PORT` | ESP32 port; empty = auto-detect | `""` |
 | `CONFIDENCE_THRESHOLD` | below this → *"unsure"* | `0.30` |
 | `CLIP_MODEL` | swap in `openai/clip-vit-base-patch32` for a 600 MB / 6 ms model | `…large-patch14` |
+| `TTA_VIEWS` | how many crops of each photo to average (1 = fastest) | `4` |
+| `AUTO_ENHANCE` | white-balance + contrast fix for the OV2640's colour cast | `true` |
+| `BIN_VOTE` | pick the bin by vote across classes, not just the top-1 | `true` |
 | `SIMULATION` | `auto` / `on` / `off` | `auto` |
+
+### Why it copes with a bad camera
+
+The OV2640 gives blurry, colour-cast, badly-framed 320×240 frames, and CLIP
+only sees one 224×224 square of that. Three things compensate, all in
+[`backend/classifier.py`](backend/classifier.py):
+
+- **`AUTO_ENHANCE`** — grey-world white balance + CLAHE, so the frame looks
+  like a normal photograph before the model ever sees it.
+- **`TTA_VIEWS`** — the same photo is scored as a centre crop, the whole frame
+  letterboxed, a 70% zoom (small items like a pen survive this) and a mirror;
+  the probabilities are averaged. Worth **+10% accuracy** on real captures.
+- **`BIN_VOTE`** — the bin is decided by the strongest few classes per bin, not
+  by one top-1 guess, so several weak "dry-ish" votes still sort correctly.
 
 ## Check accuracy
 

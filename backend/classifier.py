@@ -29,6 +29,7 @@ class Prediction:
     scores: dict        # every class name -> score
     source: str         # "clip" | "model" | "heuristic"
     category: str = ""  # waste category, e.g. "Recyclable"
+    bin_confidence: float = 0.0   # how strongly the winning BIN won (see BIN_VOTE)
 
 
 class Classifier:
@@ -169,19 +170,89 @@ class Classifier:
             return self._predict_model(bgr_image)
         return self._predict_heuristic(bgr_image)
 
+    # -- camera compensation ------------------------------------------------
+    @staticmethod
+    def _enhance(bgr: np.ndarray) -> np.ndarray:
+        """Undo the OV2640's colour cast and crushed dynamic range.
+
+        CLIP's whole notion of "what a photo of X looks like" comes from normal
+        photographs. A pink-tinted, half-black ESP32-CAM frame is off that
+        distribution, so every class scores badly and the winner is close to
+        arbitrary. Neutralising the cast and recovering local contrast costs
+        under a millisecond and puts the frame back in familiar territory.
+        """
+        import cv2
+
+        if not getattr(config, "AUTO_ENHANCE", True):
+            return bgr
+
+        # Grey-world white balance, applied at partial strength so genuinely
+        # coloured objects keep their colour.
+        img = bgr.astype(np.float32)
+        means = img.reshape(-1, 3).mean(axis=0)
+        gain = np.clip(means.mean() / np.maximum(means, 1e-3), 0.5, 2.0)
+        gain = 1.0 + (gain - 1.0) * float(getattr(config, "WB_STRENGTH", 0.7))
+        img = np.clip(img * gain, 0, 255).astype(np.uint8)
+
+        # CLAHE on lightness only — colours untouched, shadows and glare opened.
+        clip_limit = float(getattr(config, "CLAHE_CLIP", 2.0))
+        if clip_limit > 0:
+            lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            l = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8, 8)).apply(l)
+            img = cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
+        return img
+
+    @staticmethod
+    def _views(rgb: np.ndarray) -> list[np.ndarray]:
+        """Several ways of looking at one frame — see config.TTA_VIEWS."""
+        n = max(1, int(getattr(config, "TTA_VIEWS", 4)))
+        h, w = rgb.shape[:2]
+        s = min(h, w)
+        y0, x0 = (h - s) // 2, (w - s) // 2
+        centre = rgb[y0:y0 + s, x0:x0 + s]
+        views = [centre]
+
+        if n >= 2:
+            # Letterbox the whole frame into a square: the centre crop above
+            # discards ~25% of a 320x240 frame, and items are often off-centre.
+            pad = max(h, w)
+            canvas = np.full((pad, pad, 3), 127, dtype=np.uint8)
+            oy, ox = (pad - h) // 2, (pad - w) // 2
+            canvas[oy:oy + h, ox:ox + w] = rgb
+            views.append(canvas)
+        if n >= 3:
+            # Zoom: a pen in a 320x240 frame is a handful of pixels once CLIP
+            # has downscaled to 224. Cropping in first makes it legible.
+            z = int(s * 0.7)
+            zy, zx = (h - z) // 2, (w - z) // 2
+            views.append(rgb[zy:zy + z, zx:zx + z])
+        if n >= 4:
+            views.append(np.ascontiguousarray(centre[:, ::-1]))
+        return views[:n]
+
     def _predict_clip(self, bgr: np.ndarray) -> Prediction:
         import cv2
         import torch
 
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        inp = self._processor(images=rgb, return_tensors="pt")
+        rgb = cv2.cvtColor(self._enhance(bgr), cv2.COLOR_BGR2RGB)
+        views = self._views(rgb)
+        inp = self._processor(images=views, return_tensors="pt")
         inp = {k: v.to(self._device) for k, v in inp.items()}
         with torch.no_grad():
             img_feats = self._clip_model.get_image_features(**inp)
             img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
-            sims = (img_feats @ self._text_feats.T).squeeze(0)
-            logits = sims * self._clip_model.logit_scale.exp()
-            probs = logits.softmax(dim=-1).cpu().numpy()
+            logits = (img_feats @ self._text_feats.T) * self._clip_model.logit_scale.exp()
+            # Score each view separately, then average the PROBABILITIES.
+            #
+            # Averaging the embeddings instead would be tempting (it is what the
+            # text side does) but it is wrong here: the mean of several views
+            # points somewhere between them and matches every class a bit less,
+            # which flattens the softmax. Measured: correct answers fell from
+            # ~0.90 to ~0.49, gutting the margin the confidence threshold needs.
+            # Per-view softmax keeps each view's own sharpness, and a view that
+            # happens to miss the object simply contributes an unconfident vote.
+            probs = logits.softmax(dim=-1).mean(dim=0).cpu().numpy()
         return self._to_prediction(probs, source="clip")
 
     def _predict_model(self, bgr: np.ndarray) -> Prediction:
@@ -221,7 +292,28 @@ class Classifier:
                     source=source,
                 )
             scores = {classes[i]["name"]: float(probs[i]) for i in range(len(probs))}
-            idx = int(np.argmax(probs))
+
+            # Which BIN wins? Either the top class's bin, or a vote where each
+            # bin is backed by its strongest few classes (see config.BIN_VOTE).
+            if getattr(config, "BIN_VOTE", True):
+                k = max(1, int(getattr(config, "BIN_VOTE_TOPK", 3)))
+                per_bin: dict[str, list[float]] = {}
+                for i, c in enumerate(classes):
+                    per_bin.setdefault(c["bin"], []).append(float(probs[i]))
+                bin_votes = {b: float(sum(sorted(v, reverse=True)[:k]))
+                             for b, v in per_bin.items()}
+                best_bin = max(bin_votes, key=bin_votes.get)
+                bin_conf = bin_votes[best_bin]
+                # Best class *within* the winning bin, so the label the user
+                # reads always agrees with the chute the item goes down.
+                idx = max((i for i in range(len(classes))
+                           if classes[i]["bin"] == best_bin),
+                          key=lambda i: probs[i])
+            else:
+                idx = int(np.argmax(probs))
+                best_bin = classes[idx]["bin"]
+                bin_conf = float(probs[idx])
+
             cls = classes[idx]
             conf = float(probs[idx])
             label_display = f"{cls['name']} \u00b7 {cls['category']}"
@@ -229,11 +321,12 @@ class Classifier:
                 label_display += " (unsure)"
             return Prediction(
                 label=label_display,
-                bin=cls["bin"],
+                bin=best_bin,
                 confidence=conf,
                 scores=scores,
                 source=source,
                 category=cls["category"],
+                bin_confidence=bin_conf,
             )
 
         # Keras / heuristic path (label -> bin via config.BIN_MAP)

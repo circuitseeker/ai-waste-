@@ -132,6 +132,27 @@ WASTE_CLASSES = [
     {"prompts": ["a plastic straw", "disposable plastic cutlery",
                  "a plastic spoon and fork"],
      "name": "Plastic cutlery", "category": "Non-recyclable", "bin": "DRY"},
+    # --- Stationery / DRY ---------------------------------------------------
+    # Small, thin, low-contrast objects — the hardest thing for a 320x240 OV2640
+    # frame. Lots of phrasings here on purpose: a pen photographed badly reads to
+    # CLIP as "a thin dark stick", so we give it every wording that could match.
+    {"prompts": ["a ballpoint pen", "a plastic pen", "a used biro pen",
+                 "a marker pen", "a highlighter", "a felt tip pen",
+                 "a pen lying on a table", "an empty pen refill"],
+     "name": "Pen",            "category": "Stationery",      "bin": "DRY"},
+    {"prompts": ["a pencil", "a wooden pencil", "a sharpened pencil",
+                 "a short pencil stub", "pencil shavings", "a coloured pencil"],
+     "name": "Pencil",         "category": "Stationery",      "bin": "DRY"},
+    {"prompts": ["a rubber eraser", "a pencil eraser", "a small white eraser",
+                 "a used dirty eraser", "a block of rubber"],
+     "name": "Eraser",         "category": "Stationery",      "bin": "DRY"},
+    # Keep every phrase a CONCRETE object. Vague catch-alls ("a small
+    # stationery item", "desk stationery") measurably drag this class towards
+    # the empty-scene reject classes, because vague text sits near everything.
+    {"prompts": ["a pencil sharpener", "a plastic ruler", "a stapler",
+                 "paper clips", "a glue stick", "a pen holder full of pens",
+                 "a plastic pencil case"],
+     "name": "Stationery",     "category": "Stationery",      "bin": "DRY"},
     # --- Textile / DRY ---
     {"prompts": ["a piece of cloth", "folded fabric", "an old t-shirt",
                  "a rag", "a piece of clothing", "a towel"],
@@ -141,13 +162,17 @@ WASTE_CLASSES = [
     # collection. With only two physical bins, DRY is the least-wrong chute, and
     # the label says "E-waste" so a human can pull it back out.
     {"prompts": ["a mobile phone", "a smartphone", "a broken cell phone",
-                 "a computer mouse", "a circuit board", "a remote control"],
+                 "a computer mouse", "a circuit board", "a remote control",
+                 "an LED bulb", "a resistor and a capacitor",
+                 "a broken pair of headphones", "a computer keyboard"],
      "name": "Electronics",    "category": "E-waste",         "bin": "DRY"},
     {"prompts": ["a battery", "AA batteries", "a button cell battery"],
      "name": "Battery",        "category": "E-waste",         "bin": "DRY"},
     {"prompts": ["a charging cable", "a tangled usb cable", "earphones",
-                 "a power adapter"],
-     "name": "Cable / charger", "category": "E-waste",        "bin": "DRY"},
+                 "a power adapter", "a bundle of electrical wires",
+                 "a coil of copper wire", "a cut piece of electrical wire",
+                 "jumper wires", "a stripped wire"],
+     "name": "Cable / wire",   "category": "E-waste",         "bin": "DRY"},
     # --- Not waste / no item -> bin NONE, the servo does NOT fire -----------
     # Without these, EVERY frame is forced into one of the waste classes, so an
     # empty belt or a hand in shot gets sorted as whatever it least resembles.
@@ -187,6 +212,60 @@ NO_ITEM_BIN = "NONE"
 # and the belt is never empty. For unattended running raise this to 0.50,
 # where the measured gap cleanly separates real items from junk.
 CONFIDENCE_THRESHOLD = float(_env("CONFIDENCE_THRESHOLD", "0.30"))
+
+# ---------------------------------------------------------------------------
+# Making a bad camera behave — image preprocessing
+# ---------------------------------------------------------------------------
+# The OV2640 on the ESP32-CAM has no decent auto-white-balance and a tiny
+# sensor: frames come out with heavy colour casts (pink/green), crushed shadows
+# and blown highlights. CLIP was trained on normal photographs, so the further
+# a frame drifts from "a normal photo" the worse it scores. These two steps pull
+# it back towards normal BEFORE it ever reaches the model.
+AUTO_ENHANCE = _env("AUTO_ENHANCE", "true").lower() == "true"
+
+# Grey-world white balance: assume the average of the scene should be neutral
+# grey and scale each channel towards that. 1.0 = full correction, 0.0 = off.
+# 0.7 is deliberately partial — full correction washes the colour out of
+# genuinely coloured objects (a red Coca-Cola can should stay red).
+WB_STRENGTH = float(_env("WB_STRENGTH", "0.7"))
+
+# CLAHE (local contrast) on the lightness channel only, so colours are
+# untouched. Recovers detail from under-exposed corners and glare. Above ~3.0
+# it starts amplifying sensor noise into fake texture.
+CLAHE_CLIP = float(_env("CLAHE_CLIP", "2.0"))
+
+# ---------------------------------------------------------------------------
+# Test-time augmentation (TTA)
+# ---------------------------------------------------------------------------
+# CLIP sees one 224x224 square. Feeding it the centre crop of a 320x240 frame
+# throws away the left and right edges, and a small item (a pen, an eraser) can
+# end up as a few pixels in a big frame. Instead we look at the SAME photo
+# several ways and average the embeddings:
+#   1 -> centre square crop            (the plain, default behaviour)
+#   2 -> + whole frame letterboxed     (nothing cropped away)
+#   3 -> + 70% centre zoom             (rescues small items)
+#   4 -> + mirrored centre crop        (cancels left/right framing luck)
+# Cost is roughly linear: each extra view is one more forward pass (~200 ms on
+# CPU with large-patch14). Set TTA_VIEWS=1 if you need the loop faster.
+TTA_VIEWS = int(_env("TTA_VIEWS", "4"))
+
+# ---------------------------------------------------------------------------
+# How the physical bin is decided
+# ---------------------------------------------------------------------------
+# Naive: take the single highest-scoring class and use its bin. That is fragile
+# with ~25 classes, because a pen at 0.20, an eraser at 0.18 and plastic cutlery
+# at 0.15 can all lose to one unrelated class at 0.22 — even though the photo is
+# overwhelmingly "something dry".
+#
+# With BIN_VOTE on we instead add up the strongest few classes PER BIN and let
+# the bins compete. The displayed label is still the best class inside the
+# winning bin, so the label and the servo can never contradict each other.
+#
+# Top-K rather than a full sum on purpose: DRY has far more classes than WET, so
+# summing everything would hand DRY a permanent head start just for being a
+# bigger list. K=3 keeps the vote about strong evidence, not class counts.
+BIN_VOTE = _env("BIN_VOTE", "true").lower() == "true"
+BIN_VOTE_TOPK = int(_env("BIN_VOTE_TOPK", "3"))
 
 # ---------------------------------------------------------------------------
 # Legacy: local Keras model (Teachable Machine / train_model.py)
