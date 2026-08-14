@@ -268,6 +268,49 @@ BIN_VOTE = _env("BIN_VOTE", "true").lower() == "true"
 BIN_VOTE_TOPK = int(_env("BIN_VOTE_TOPK", "3"))
 
 # ---------------------------------------------------------------------------
+# Few-shot prototypes — the single biggest upgrade available, and still no
+# training
+# ---------------------------------------------------------------------------
+# Zero-shot CLIP compares your photo against a SENTENCE ("a photo of a pen").
+# That sentence describes a pen in general, not a pen as YOUR camera sees one,
+# under YOUR lighting, on YOUR belt. The gap between those two is most of the
+# error left in this system.
+#
+# Drop a few real photos in `prototypes/` and each class also gets an "this is
+# what it actually looks like here" vector, averaged from your images and mixed
+# with the text one. No training, no labels beyond the filename, no GPU — it is
+# just an extra average, computed once at startup.
+#
+#   prototypes/
+#     pen_01.jpg  pen_02.jpg  pen_03.jpg
+#     cardboard_01.jpg  cardboard_02.jpg
+#     fruit_peel_01.jpg  ...
+#
+# Name each file with the class name in lowercase, spaces as underscores, then
+# anything you like. Classes you have no photos for keep working on text alone,
+# so you can add them a few at a time. 3-5 photos per class is plenty.
+PROTOTYPE_DIR = _env("PROTOTYPE_DIR", "prototypes")
+
+# How much to trust your photos vs the text description, 0.0-1.0.
+# 0.0 = ignore photos entirely (pure zero-shot, the old behaviour)
+# 0.5 = balanced, a good default
+# 1.0 = photos only, which overfits hard if you gave it 3 images of one angle
+PROTOTYPE_WEIGHT = float(_env("PROTOTYPE_WEIGHT", "0.5"))
+
+# ALL-OR-NOTHING, and it matters. Photos for only some classes make those
+# classes beat everything else regardless of what is in front of the camera —
+# measured, class accuracy 0/7 -> 7/7 but junk rejection 50% -> 0%. So example
+# photos are ignored unless EVERY class in WASTE_CLASSES has some. Two ways to
+# get there: photograph all of them (including the easy ones — "No item" is a
+# picture of the empty belt, "Hand" is your hand), or delete the classes you
+# are never going to demo. Set this true only if you know what you are trading.
+PROTOTYPE_ALLOW_PARTIAL = _env("PROTOTYPE_ALLOW_PARTIAL", "false").lower() == "true"
+
+# Note: with prototypes on, scores saturate near 1.00 and CONFIDENCE_THRESHOLD
+# stops being a useful reject signal — the model becomes very decisive. Good
+# for a live demo, worse for spotting an empty belt.
+
+# ---------------------------------------------------------------------------
 # Legacy: local Keras model (Teachable Machine / train_model.py)
 # ---------------------------------------------------------------------------
 # Kept only so an old trained model still loads if CLIP can't run. Unused when

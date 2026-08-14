@@ -24,3 +24,6 @@ testdata/
 # PlatformIO build output
 firmware/.pio/
 .pio/
+
+# your own example photos — local, often large
+prototypes/

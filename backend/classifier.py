@@ -42,6 +42,9 @@ class Classifier:
         self._text_feats = None      # normalized text embeddings [n_cls, d]
         self._classes: list[dict] = []
         self._device = "cpu"
+        self._text_pad: dict = {"padding": True}
+        self._proto_feats = None     # [n_proto, d] example-photo vectors
+        self._proto_idx: list[int] = []   # which class each prototype belongs to
         # legacy Keras state
         self._keras_model = None
         self._keras_labels: list[str] = []
@@ -59,7 +62,7 @@ class Classifier:
     def _load_clip(self) -> bool:
         try:
             import torch
-            from transformers import CLIPModel, CLIPProcessor
+            from transformers import AutoModel, AutoProcessor
         except Exception as exc:  # noqa: BLE001
             print(f"[classifier] CLIP deps missing ({exc}) -> skipping CLIP.")
             return False
@@ -80,9 +83,18 @@ class Classifier:
         try:
             print(f"[classifier] Loading CLIP '{config.CLIP_MODEL}' "
                   f"(first run downloads the weights, cached thereafter)...")
-            model = CLIPModel.from_pretrained(config.CLIP_MODEL)
-            processor = CLIPProcessor.from_pretrained(config.CLIP_MODEL)
+            model = AutoModel.from_pretrained(config.CLIP_MODEL)
+            processor = AutoProcessor.from_pretrained(config.CLIP_MODEL)
             model.to(device).eval()
+
+            # SigLIP is a drop-in better backbone (same two-tower API) but its
+            # text tower is trained with every sequence padded to a fixed 64
+            # tokens. Pad dynamically instead and the embeddings come out
+            # subtly wrong — it still "works", just worse, which is the most
+            # annoying kind of bug. CLIP wants ordinary padding.
+            is_siglip = "siglip" in config.CLIP_MODEL.lower()
+            self._text_pad = {"padding": "max_length", "max_length": 64} \
+                if is_siglip else {"padding": True}
 
             # Prompt ensembling: render every phrase of a class through every
             # template, embed them all, and average into ONE vector per class.
@@ -95,13 +107,15 @@ class Classifier:
                 for c in classes:
                     phrases = c.get("prompts") or [c["prompt"]]
                     text = [t.format(p) for p in phrases for t in templates]
-                    tok = processor(text=text, padding=True, return_tensors="pt")
+                    tok = processor(text=text, return_tensors="pt", **self._text_pad)
                     tok = {k: v.to(device) for k, v in tok.items()}
                     f = model.get_text_features(**tok)
                     f = f / f.norm(dim=-1, keepdim=True)
                     f = f.mean(dim=0)
                     per_class.append(f / f.norm())
                 feats = torch.stack(per_class)
+                feats = self._blend_prototypes(feats, classes, model, processor,
+                                               device, torch)
         except Exception as exc:  # noqa: BLE001
             print(f"[classifier] Could not load CLIP ({exc}) -> skipping CLIP.")
             return False
@@ -116,6 +130,110 @@ class Classifier:
         names = [c["name"] for c in classes]
         print(f"[classifier] CLIP ready on '{device}' with {len(names)} classes: {names}")
         return True
+
+    # -- few-shot prototypes -------------------------------------------------
+    @staticmethod
+    def _class_key(name: str) -> str:
+        """'Cable / wire' -> 'cable_wire', to match a filename prefix."""
+        return name.lower().replace(" / ", "_").replace(" ", "_")
+
+    def _blend_prototypes(self, text_feats, classes, model, processor,
+                          device, torch):
+        """Build "what this looks like on MY camera" vectors, if any exist.
+
+        For each class we average the embeddings of the user's example photos.
+        A text prompt describes the concept; the photos describe the concept
+        *as this camera renders it*, which is the part CLIP cannot guess.
+
+        THE CATCH — read before enabling. CLIP's image and text embeddings sit
+        in different regions of the space (the "modality gap"), so a class
+        holding a real photo scores far higher against a live frame than any
+        text-only class can. Measured with photos for 2 of 27 classes: class
+        accuracy 0/7 -> 7/7, but junk rejection collapsed 50% -> 0% and every
+        score pinned to 1.00. The two classes with photos swallowed everything.
+
+        Rescaling the two score distributions onto a common scale was tried and
+        does not rescue it: with only a few prototype classes the statistics are
+        too noisy to standardise against, and the signal vanishes instead
+        (measured: back to 0/7, stationery confidence 0.27 -> 0.16).
+
+        So this is deliberately all-or-nothing. With EVERY class covered the gap
+        shifts all classes equally and the blend is both safe and very strong;
+        with partial coverage it is refused unless you insist.
+        """
+        import glob
+        import os
+
+        import cv2
+
+        weight = float(getattr(config, "PROTOTYPE_WEIGHT", 0.5))
+        folder = getattr(config, "PROTOTYPE_DIR", "prototypes")
+        if weight <= 0 or not folder:
+            return text_feats
+        if not os.path.isabs(folder):
+            folder = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), folder)
+        if not os.path.isdir(folder):
+            return text_feats
+
+        # Bucket the example photos by the class name their filename starts
+        # with. Longest name first so "plastic_bottle_01" is not claimed by a
+        # hypothetical "plastic" class.
+        keys = sorted(((self._class_key(c["name"]), i) for i, c in enumerate(classes)),
+                      key=lambda kv: len(kv[0]), reverse=True)
+        buckets: dict[int, list] = {}
+        for path in sorted(glob.glob(os.path.join(folder, "*"))):
+            if not path.lower().endswith((".jpg", ".jpeg", ".png")):
+                continue
+            stem = os.path.basename(path).lower()
+            for key, idx in keys:
+                if stem.startswith(key):
+                    img = cv2.imread(path)
+                    if img is not None:
+                        buckets.setdefault(idx, []).append(img)
+                    break
+
+        if not buckets:
+            return text_feats
+
+        proto_feats, proto_idx, used = [], [], []
+        with torch.no_grad():
+            for idx, images in sorted(buckets.items()):
+                # Embed each example exactly the way a live frame is embedded —
+                # same enhancement, same crops — or the prototype describes a
+                # different pipeline than the one it will be compared against.
+                views = []
+                for img in images:
+                    rgb = cv2.cvtColor(self._enhance(img), cv2.COLOR_BGR2RGB)
+                    views.extend(self._views(rgb))
+                inp = processor(images=views, return_tensors="pt")
+                inp = {k: v.to(device) for k, v in inp.items()}
+                f = model.get_image_features(**inp)
+                f = f / f.norm(dim=-1, keepdim=True)
+                f = f.mean(dim=0)
+                proto_feats.append(f / f.norm())
+                proto_idx.append(idx)
+                used.append(f"{classes[idx]['name']}×{len(images)}")
+
+        missing = [c["name"] for i, c in enumerate(classes) if i not in set(proto_idx)]
+        if missing and not getattr(config, "PROTOTYPE_ALLOW_PARTIAL", False):
+            print(f"[classifier] Ignoring example photos ({', '.join(used)}): "
+                  f"{len(missing)} of {len(classes)} classes have none "
+                  f"({', '.join(missing[:5])}{'...' if len(missing) > 5 else ''}).")
+            print("[classifier] Photos for only SOME classes make those classes "
+                  "win everything. Add photos for every class, cut the classes "
+                  "you will not demo, or set PROTOTYPE_ALLOW_PARTIAL=true.")
+            return text_feats
+
+        feats = text_feats.clone()
+        for slot, idx in enumerate(proto_idx):
+            blended = (1.0 - weight) * feats[idx] + weight * proto_feats[slot]
+            feats[idx] = blended / blended.norm()
+        print(f"[classifier] Few-shot prototypes (weight {weight}): {', '.join(used)}")
+        if missing:
+            print(f"[classifier] WARNING: partial coverage forced on. These "
+                  f"classes have no photos and will rarely win: {', '.join(missing)}")
+        return feats
 
     def _load_keras(self) -> bool:
         if not os.path.exists(config.MODEL_PATH):

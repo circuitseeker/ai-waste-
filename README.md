@@ -118,6 +118,28 @@ only sees one 224×224 square of that. Three things compensate, all in
 - **`BIN_VOTE`** — the bin is decided by the strongest few classes per bin, not
   by one top-1 guess, so several weak "dry-ish" votes still sort correctly.
 
+### Teach it your camera (biggest single upgrade, still no training)
+
+Zero-shot CLIP matches your photo against a *sentence*. A few real photos from
+your own camera beat any sentence. Measured on held-out frames: **0/7 → 7/7**.
+
+```
+prototypes/
+  cardboard_01.jpg  cardboard_02.jpg  cardboard_03.jpg
+  pen_01.jpg        pen_02.jpg        pen_03.jpg
+  no_item_01.jpg    hand_01.jpg       ...
+```
+
+Name each file with the class name (lowercase, `_` for spaces), 3–5 photos
+each. It is read once at startup — no training step.
+
+> **It is all-or-nothing on purpose.** Photos for only *some* classes make
+> those classes win everything (measured: junk rejection 50% → 0%). So it is
+> ignored until every class in `WASTE_CLASSES` has photos. Either shoot them
+> all — `No item` is a picture of the empty belt, `Hand` is your hand — or
+> delete the classes you will never demo. Scores also saturate near 1.00, so
+> `CONFIDENCE_THRESHOLD` stops flagging junk: very decisive, less cautious.
+
 ## Check accuracy
 
 ```bash
