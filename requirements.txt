@@ -6,10 +6,16 @@ pyserial==3.5
 numpy==1.26.4
 opencv-python==4.10.0.84
 
-# --- Local ML model ----------------------------------------------------------
-# On Apple Silicon Macs use: pip install tensorflow-macos
-# On Windows / Intel:        pip install tensorflow
-tensorflow==2.16.2
+# --- Local ML: zero-shot CLIP (runs on your laptop, no cloud) -----------------
+# Apple Silicon: torch ships MPS wheels via PyPI directly (just `pip install torch`).
+# Windows/Linux/Intel: same `torch` install picks the right wheel.
+# transformers loads OpenAI CLIP weights (cached after first run).
+torch>=2.2
+transformers>=4.40
+
+# --- Legacy: local Keras model (optional, only if you train one) -------------
+# Uncomment to use a Teachable Machine / train_model.py Keras model instead of CLIP.
+# tensorflow==2.16.2          # Apple Silicon: use tensorflow-macos
 
 # --- Optional: Firebase Realtime Database logging ----------------------------
 # firebase-admin==6.5.0

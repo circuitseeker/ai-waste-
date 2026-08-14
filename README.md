@@ -1,96 +1,122 @@
 # ♻️ AI Waste Segregation
 
-A smart bin that sorts **dry/paper** vs **wet** waste automatically.
+Point an ESP32-CAM at a piece of rubbish; it tells you what it is and which bin
+it belongs in, then drives a servo to sort it.
 
-An **ESP32-CAM** does the vision capture and drives the hardware (ultrasonic
-trigger, 2-axis servo, conveyor belt, LCD). The **ML model runs locally on your
-Mac or Windows laptop**, and a clean **web dashboard** shows the live camera,
-classification result, counts, and history in real time.
+Classification runs **locally** with zero-shot CLIP — no training, no API key,
+no cloud. It recognises ~20 item types (banana peel, soda can, chocolate
+wrapper, cloth, mobile phone…) and says *"not sure"* rather than guessing.
 
-```
-Browser UI  ◄──WebSocket──►  Python backend (FastAPI + TensorFlow)  ◄──Wi-Fi──►  ESP32-CAM
- live feed, result,            local model inference + control loop     camera + HC-SR04
- counts, history, controls    (detect → capture → classify → divert)   + 2-axis servo + belt
-```
-
-## Highlights
-- **Model runs locally** — no GPU, no paid cloud inference (MobileNetV2, ~1s/image on CPU).
-- **Web UI** — Apple-style dashboard, live feed, live results over WebSocket.
-- **Runs with zero hardware** — built-in *simulation mode* uses your laptop webcam so you can try the whole flow before the ESP32 or model are ready.
-- **Swappable model** — drop in a Google Teachable Machine export or train your own.
-- **Optional Firebase** logging for remote monitoring.
+**Runs with no hardware at all** — it falls back to your laptop webcam, so you
+can try the whole flow before touching the ESP32.
 
 ---
 
 ## Quick start
 
 ### 1. Install
+
+<details open>
+<summary><b>macOS / Linux</b></summary>
+
 ```bash
-cd waste-segregation
-python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+git clone https://github.com/circuitseeker/ai-waste-.git
+cd ai-waste-
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-# Apple Silicon Mac: pip install tensorflow-macos  (instead of the tensorflow line)
+```
+</details>
+
+<details>
+<summary><b>Windows (PowerShell)</b></summary>
+
+```powershell
+git clone https://github.com/circuitseeker/ai-waste-.git
+cd ai-waste-
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
-### 2. Run (works immediately, even with no hardware/model)
+If activation is blocked, run once:
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
+</details>
+
+### 2. Run
+
 ```bash
 python -m backend.app
 ```
-Open **http://127.0.0.1:8000**. With no ESP32/model it starts in **simulation
-mode** — click **“Simulate Item”** to watch detect → classify → sort.
 
-### 3. Add the model
-Train or export a model into [`model/`](model/README.md) (Teachable Machine is
-the fastest path). Restart the server — the UI will show *“Local model loaded.”*
+Open **<http://127.0.0.1:8000>**.
 
-### 4. Connect the ESP32-CAM
-1. Open `firmware/esp32cam_waste/esp32cam_waste.ino` in Arduino IDE.
-2. Set your Wi-Fi SSID/password, select board **“AI Thinker ESP32-CAM”**, flash it.
-3. Read the printed IP from the Serial Monitor and set it in `backend/config.py`
-   (`ESP32_IP`) — or `export ESP32_IP=192.168.x.x` before running.
-4. Restart the server. It auto-detects the board; the UI shows
-   *“ESP32-CAM connected.”*
+> First launch downloads the CLIP weights (~1.7 GB) and takes a few minutes.
+> Every later start takes ~10 s. Nothing else to download or train.
+
+### 3. Plug in the ESP32-CAM (optional)
+
+Flash `firmware/esp32cam_serial/` with [PlatformIO](https://platformio.org/):
+
+```bash
+cd firmware
+pio run -t upload        # hold GPIO0 -> GND and reset to enter bootloader
+```
+
+Then restart the server. The port is auto-detected on all three OSes; the UI
+shows *"ESP32-CAM connected"*.
 
 ---
 
-## Configuration
-All settings live in [`backend/config.py`](backend/config.py) and can be
-overridden with environment variables, e.g.:
-```bash
-ESP32_IP=192.168.1.50 CONFIDENCE_THRESHOLD=0.7 SIMULATION=off python -m backend.app
+## Common problems
+
+| Symptom | Fix |
+|---|---|
+| `no serial port found` | Close Arduino Serial Monitor / `liveview.py` — only one program can hold the port. Still stuck? Set it manually (below). |
+| Wrong / no device picked | `SERIAL_PORT=COM5` (Windows), `SERIAL_PORT=/dev/ttyUSB0` (Linux), `SERIAL_PORT=/dev/cu.usbserial-XXXX` (macOS) |
+| Linux: permission denied on port | `sudo usermod -aG dialout $USER`, then log out and back in |
+| UI says "Heuristic (no model)" | `pip install torch transformers` |
+| Everything sorted as one class | Improve the lighting first — glare is the top cause. Then see *Tuning*. |
+
+## Tuning
+
+Everything lives in [`backend/config.py`](backend/config.py). Add an item type
+by adding one line to `WASTE_CLASSES` — no retraining:
+
+```python
+{"prompts": ["a pizza box", "a greasy cardboard food box"],
+ "name": "Pizza box", "category": "Non-recyclable", "bin": "DRY"},
 ```
+
+Any setting can be overridden per-run:
+
+```bash
+CONFIDENCE_THRESHOLD=0.5 SIMULATION=on python -m backend.app
+```
+
 | Variable | Meaning | Default |
 |---|---|---|
-| `ESP32_IP` | ESP32-CAM address | `192.168.1.50` |
+| `SERIAL_PORT` | ESP32 port; empty = auto-detect | `""` |
+| `CONFIDENCE_THRESHOLD` | below this → *"unsure"* | `0.30` |
+| `CLIP_MODEL` | swap in `openai/clip-vit-base-patch32` for a 600 MB / 6 ms model | `…large-patch14` |
 | `SIMULATION` | `auto` / `on` / `off` | `auto` |
-| `CONFIDENCE_THRESHOLD` | below this → *unsure* | `0.60` |
-| `OBJECT_DISTANCE_CM` | ultrasonic trigger distance | `12` |
-| `FIREBASE_ENABLED` | cloud logging | `false` |
 
-## Project layout
+## Check accuracy
+
+```bash
+python tools/bench.py                 # scores against real ESP32-CAM photos
+python tools/bench.py --dir my_pics/  # …or your own (name files by class)
 ```
-backend/    FastAPI server, control loop, model + hardware glue
-web/        dashboard (HTML / CSS / JS)
-firmware/   ESP32-CAM Arduino sketch
-train/      MobileNetV2 training script
-model/      drop your trained model here (git-ignored)
+
+## Layout
+
+```
+backend/    FastAPI server, CLIP classifier, control loop
+web/        dashboard (HTML/CSS/JS)
+firmware/   ESP32-CAM sketch (PlatformIO)
+tools/      bench.py (accuracy), liveview.py (live view + capture)
 ```
 
 ## Hardware
-ESP32-CAM (AI-Thinker) · HC-SR04 ultrasonic · 2× SG90/MG90S servos (2-axis
-drop) · DC gear motor + belt + L298N driver · 16×2 I²C LCD · 5 V supply · laptop.
 
-> **Note:** the AI-Thinker ESP32-CAM has very few free GPIOs (the camera uses
-> most). Pin assignments in the firmware are camera-safe but should be verified
-> for your board revision; for a robust build, offload the servos/motor/LCD to a
-> small companion MCU driven over serial. See comments in the `.ino`.
-
-## API (for reference)
-| Route | What |
-|---|---|
-| `GET /` | dashboard |
-| `GET /api/status` | current state (JSON) |
-| `GET /api/snapshot` | latest camera JPEG (proxied) |
-| `GET /api/history` | recent events |
-| `POST /api/control/{pause\|resume\|reset\|trigger}` | controls |
-| `WS /ws` | live event stream |
+ESP32-CAM (AI-Thinker) · HC-SR04 ultrasonic · 2× SG90/MG90S servos · DC gear
+motor + belt + L298N · 16×2 I²C LCD · 5 V supply · laptop.

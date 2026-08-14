@@ -93,10 +93,18 @@ float readDistanceMm() {
 void writeU32(uint32_t v) { Serial.write((uint8_t *)&v, 4); }
 void writeU16(uint16_t v) { Serial.write((uint8_t *)&v, 2); }
 
+// Discard only on the very first capture (post-boot exposure settle). With
+// fb_count=1 + CAMERA_GRAB_WHEN_EMPTY, every esp_camera_fb_get() already blocks
+// for a FRESH frame, so tossing one each call just doubled capture time
+// (~360ms -> ~180ms) for no benefit.
+static bool sFirstCapture = true;
+
 void doCapture() {
-  // Discard the one stale buffered frame so we send the CURRENT view.
-  camera_fb_t *d = esp_camera_fb_get();
-  if (d) esp_camera_fb_return(d);
+  if (sFirstCapture) {
+    camera_fb_t *d = esp_camera_fb_get();
+    if (d) esp_camera_fb_return(d);
+    sFirstCapture = false;
+  }
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) { Serial.print("ERR0"); writeU32(0); writeU16(0); writeU16(0); return; }
 

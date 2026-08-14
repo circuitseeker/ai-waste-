@@ -17,3 +17,10 @@ captures/
 
 # OS
 .DS_Store
+
+# Benchmark images (re-downloaded by tools/bench.py)
+testdata/
+
+# PlatformIO build output
+firmware/.pio/
+.pio/

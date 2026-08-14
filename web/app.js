@@ -73,19 +73,23 @@ function applyStatus(s) {
   el.camSource.textContent =
     s.hardware_mode === "esp32" ? "ESP32-CAM" : "Simulated";
 
-  el.pillModel.textContent =
-    s.model_source === "model" ? "Local model loaded" : "Heuristic (no model)";
-  el.pillModel.className =
-    "pill " + (s.model_source === "model" ? "pill-ok" : "pill-warn");
+  const modelLoaded = s.model_source === "model" || s.model_source === "clip";
+  const modelLabel = {
+    clip: "CLIP zero-shot",
+    model: "Local model loaded",
+    heuristic: "Heuristic (no model)",
+  }[s.model_source] || "Heuristic (no model)";
+  el.pillModel.textContent = modelLabel;
+  el.pillModel.className = "pill " + (modelLoaded ? "pill-ok" : "pill-warn");
 
   if (s.counts) updateCounts(s.counts);
 
   if (s.hardware_mode !== "esp32") {
     el.hint.textContent =
       "No ESP32 detected — running in simulation. Use “Simulate Item” to test the flow.";
-  } else if (s.model_source !== "model") {
+  } else if (!modelLoaded) {
     el.hint.textContent =
-      "ESP32 connected, but no trained model found. Drop a model into model/ (see model/README).";
+      "ESP32 connected, but no model loaded. Install torch/transformers for CLIP.";
   } else {
     el.hint.textContent = "System ready.";
   }

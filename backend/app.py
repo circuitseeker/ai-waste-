@@ -51,7 +51,7 @@ class State:
         return {
             "type": "status",
             "hardware_mode": self.hardware.mode,
-            "model_source": "model" if self.classifier.ready else "heuristic",
+            "model_source": self.classifier.source,
             "labels": self.classifier.labels,
             "running": self.running,
             "busy": self.busy,
@@ -91,15 +91,21 @@ async def process_item() -> None:
         frame = await loop.run_in_executor(None, state.hardware.capture)
         pred = await loop.run_in_executor(None, state.classifier.predict, frame)
 
-        # Drive the physical bin.
-        await loop.run_in_executor(None, state.hardware.send_result, pred.bin)
+        # "Not waste" frames (empty belt, a hand, background clutter) must not
+        # move the servo or inflate the counters — the classifier decided there
+        # is nothing to sort, so treat this as a no-op observation.
+        no_item = pred.bin == getattr(config, "NO_ITEM_BIN", "NONE")
 
-        # Bookkeeping.
-        state.counts[pred.bin] = state.counts.get(pred.bin, 0) + 1
+        if not no_item:
+            # Drive the physical bin.
+            await loop.run_in_executor(None, state.hardware.send_result, pred.bin)
+            state.counts[pred.bin] = state.counts.get(pred.bin, 0) + 1
+
         event = {
             "type": "result",
             "label": pred.label,
             "bin": pred.bin,
+            "no_item": no_item,
             "confidence": round(pred.confidence, 4),
             "scores": {k: round(v, 4) for k, v in pred.scores.items()},
             "source": pred.source,

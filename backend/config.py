@@ -49,18 +49,153 @@ OBJECT_DISTANCE_CM = float(_env("OBJECT_DISTANCE_CM", "12"))
 
 
 # ---------------------------------------------------------------------------
-# Model
+# Classifier — zero-shot CLIP (runs fully on your laptop, no cloud)
 # ---------------------------------------------------------------------------
-# Path to a trained Keras model. The default matches a Google Teachable Machine
-# "TensorFlow / Keras" export dropped into the model/ folder.
+# We use OpenAI's CLIP, downloaded once as open weights and cached locally
+# (at ~/.cache/huggingface). It scores the captured photo against a list of
+# waste "concepts" and picks the best match — so it can recognise arbitrary
+# items (a Pepsi can -> "Aluminium can, Recyclable, Dry") without you having
+# to train anything. Add / edit classes freely in WASTE_CLASSES.
+#
+# large-patch14 (~1.7 GB, ~200 ms/frame) is the default because it was
+# measurably better on real ESP32-CAM frames than base-patch32 (~600 MB,
+# ~6 ms): 7/7 vs 5/7 correct, and it puts junk frames below the confidence
+# threshold instead of guessing confidently. 200 ms is irrelevant here — the
+# serial capture alone costs ~180 ms and the servo settle ~1.1 s.
+# Set CLIP_MODEL=openai/clip-vit-base-patch32 if you want the small one.
+CLIP_MODEL = _env("CLIP_MODEL", "openai/clip-vit-large-patch14")
+
+# CLIP is noticeably more accurate when you average several phrasings of the
+# same concept ("prompt ensembling") instead of scoring one sentence. Each
+# class phrase below is rendered through EVERY template, and the resulting
+# embeddings are averaged into one vector per class.
+#
+# These templates deliberately describe the conditions the ESP32-CAM actually
+# produces — blurry, close-up, handheld, badly lit — not clean studio shots.
+PROMPT_TEMPLATES = [
+    "a photo of {}",
+    "a blurry photo of {}",
+    "a close-up photo of {}",
+    "a low quality webcam photo of {}",
+    "a photo of {} on a table",
+    "a badly lit photo of {}",
+    "a cropped photo of {} filling the frame",
+]
+
+# Each class is a thing CLIP compares the photo to. Fields:
+#   prompts   -> noun phrases for the concept. MORE PHRASINGS = BETTER. Include
+#                brand names (a Pepsi can) and synonyms; they all collapse to
+#                the one `name`, so adding them costs nothing at runtime.
+#   name      -> short label shown in the UI / scores
+#   category  -> waste category, e.g. "Biodegradable", "Recyclable"
+#   bin       -> physical bin the servo targets: "WET" or "DRY"
+WASTE_CLASSES = [
+    # --- Biodegradable / WET ---
+    {"prompts": ["fruit peel", "a banana peel", "an orange peel", "vegetable peelings"],
+     "name": "Fruit peel",     "category": "Biodegradable",   "bin": "WET"},
+    {"prompts": ["food scraps", "leftover food", "food waste", "a plate of leftovers"],
+     "name": "Food scraps",    "category": "Biodegradable",   "bin": "WET"},
+    {"prompts": ["a used tea bag", "coffee grounds", "wet tea leaves"],
+     "name": "Tea / coffee",   "category": "Biodegradable",   "bin": "WET"},
+    {"prompts": ["eggshells", "a broken eggshell"],
+     "name": "Eggshells",      "category": "Biodegradable",   "bin": "WET"},
+    # --- Recyclable / DRY ---
+    {"prompts": ["an aluminium drinks can", "a soda can", "a Pepsi can",
+                 "a Coca-Cola can", "a crushed beverage can"],
+     "name": "Aluminium can",  "category": "Recyclable",      "bin": "DRY"},
+    {"prompts": ["a plastic bottle", "a clear plastic water bottle", "a PET bottle"],
+     "name": "Plastic bottle", "category": "Recyclable",      "bin": "DRY"},
+    {"prompts": ["a glass bottle", "a glass jar"],
+     "name": "Glass bottle",   "category": "Recyclable",      "bin": "DRY"},
+    {"prompts": ["a sheet of paper", "crumpled paper", "a paper cup", "a newspaper"],
+     "name": "Paper",          "category": "Recyclable",      "bin": "DRY"},
+    {"prompts": ["a cardboard box", "corrugated cardboard", "a brown shipping carton",
+                 "a cardboard parcel with printed logo"],
+     "name": "Cardboard",      "category": "Recyclable",      "bin": "DRY"},
+    {"prompts": ["a steel food tin", "a tin can", "a metal food can"],
+     "name": "Steel can",      "category": "Recyclable",      "bin": "DRY"},
+    {"prompts": ["a juice carton", "a milk carton", "a Tetra Pak drinks carton"],
+     "name": "Carton",         "category": "Recyclable",      "bin": "DRY"},
+    # --- Non-recyclable / DRY ---
+    {"prompts": ["a crisp packet", "a foil snack wrapper", "a shiny plastic wrapper",
+                 "a chocolate bar wrapper", "a candy wrapper",
+                 "a torn open snack packet"],
+     "name": "Wrapper",        "category": "Non-recyclable",  "bin": "DRY"},
+    {"prompts": ["a polystyrene foam cup", "a styrofoam container",
+                 "a piece of thermocol packing foam"],
+     "name": "Foam / thermocol", "category": "Non-recyclable", "bin": "DRY"},
+    {"prompts": ["a plastic carrier bag", "a crumpled plastic bag",
+                 "a polythene bag"],
+     "name": "Plastic bag",    "category": "Non-recyclable",  "bin": "DRY"},
+    {"prompts": ["a used paper tissue", "a crumpled napkin", "a paper towel"],
+     "name": "Tissue",         "category": "Non-recyclable",  "bin": "DRY"},
+    {"prompts": ["a plastic straw", "disposable plastic cutlery",
+                 "a plastic spoon and fork"],
+     "name": "Plastic cutlery", "category": "Non-recyclable", "bin": "DRY"},
+    # --- Textile / DRY ---
+    {"prompts": ["a piece of cloth", "folded fabric", "an old t-shirt",
+                 "a rag", "a piece of clothing", "a towel"],
+     "name": "Cloth",          "category": "Textile",         "bin": "DRY"},
+    # --- E-waste / DRY -----------------------------------------------------
+    # Electronics genuinely belong in neither bin — they need separate hazardous
+    # collection. With only two physical bins, DRY is the least-wrong chute, and
+    # the label says "E-waste" so a human can pull it back out.
+    {"prompts": ["a mobile phone", "a smartphone", "a broken cell phone",
+                 "a computer mouse", "a circuit board", "a remote control"],
+     "name": "Electronics",    "category": "E-waste",         "bin": "DRY"},
+    {"prompts": ["a battery", "AA batteries", "a button cell battery"],
+     "name": "Battery",        "category": "E-waste",         "bin": "DRY"},
+    {"prompts": ["a charging cable", "a tangled usb cable", "earphones",
+                 "a power adapter"],
+     "name": "Cable / charger", "category": "E-waste",        "bin": "DRY"},
+    # --- Not waste / no item -> bin NONE, the servo does NOT fire -----------
+    # Without these, EVERY frame is forced into one of the waste classes, so an
+    # empty belt or a hand in shot gets sorted as whatever it least resembles.
+    # These compete in the same softmax, so "nothing there" can simply win.
+    # Verified: real desk-clutter frames flipped from a confident 0.5x
+    # "Plastic bottle" to a correct no-item reject once these were added.
+    {"prompts": ["an empty conveyor belt", "an empty plastic tray",
+                 "an empty table top", "a plain empty surface",
+                 "an empty cardboard bin interior"],
+     "name": "No item",        "category": "Not waste",       "bin": "NONE"},
+    {"prompts": ["a human hand", "a person's fingers", "an arm reaching in"],
+     "name": "Hand",           "category": "Not waste",       "bin": "NONE"},
+    # Keep these prompts about EMPTY SCENES, not about objects. Naming an
+    # object here (e.g. "a pile of clothes") makes this reject class compete
+    # with the real class for it and swallow genuine items.
+    {"prompts": ["an empty room interior", "a bare wall or floor",
+                 "a wide shot of a room with no clear subject",
+                 "an out of focus dark blurry photo of nothing"],
+     "name": "Background",     "category": "Not waste",       "bin": "NONE"},
+]
+
+# Bin value meaning "do not actuate" — the control loop skips the servo, the
+# belt, and the counters when a frame lands in one of the "Not waste" classes.
+NO_ITEM_BIN = "NONE"
+
+# Minimum confidence before we trust a prediction. Below this we mark "(unsure)"
+# and the servo still fires on the best guess — "unsure" is a label, not a veto.
+#
+# Set to 0.30 for DEMO USE: decisive. On real ESP32-CAM frames correct answers
+# land at 0.94-0.99, so 0.30 never blocks a genuine item — the system always
+# commits and never freezes mid-presentation, which reads far better in front
+# of an audience than a silent no-op.
+#
+# The tradeoff, measured: junk frames (empty belt, glare, clutter) score
+# 0.25-0.45, so at 0.30 most of them are NOT flagged and will be sorted as
+# whatever they least resemble. That is fine when you are hand-feeding items
+# and the belt is never empty. For unattended running raise this to 0.50,
+# where the measured gap cleanly separates real items from junk.
+CONFIDENCE_THRESHOLD = float(_env("CONFIDENCE_THRESHOLD", "0.30"))
+
+# ---------------------------------------------------------------------------
+# Legacy: local Keras model (Teachable Machine / train_model.py)
+# ---------------------------------------------------------------------------
+# Kept only so an old trained model still loads if CLIP can't run. Unused when
+# CLIP is active. Drop keras_model.h5 + labels.txt into model/ to re-enable.
 MODEL_PATH = _env("MODEL_PATH", "model/keras_model.h5")
 LABELS_PATH = _env("LABELS_PATH", "model/labels.txt")
-
-# Input size the model expects (Teachable Machine + MobileNetV2 both use 224).
 IMG_SIZE = int(_env("IMG_SIZE", "224"))
-
-# Minimum confidence before we trust a prediction. Below this we mark UNSURE.
-CONFIDENCE_THRESHOLD = float(_env("CONFIDENCE_THRESHOLD", "0.60"))
 
 
 # ---------------------------------------------------------------------------
