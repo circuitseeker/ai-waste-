@@ -4,7 +4,7 @@ Point an ESP32-CAM at a piece of rubbish; it tells you what it is and which bin
 it belongs in, then drives a servo to sort it.
 
 Classification runs **locally** with zero-shot CLIP — no training, no API key,
-no cloud. It recognises 27 item types — banana peel, soda can, chocolate
+no cloud. It recognises 29 item types — banana peel, soda can, chocolate
 wrapper, cloth, mobile phone, pens, pencils, erasers, wires, tissues, plastic
 bags — and says *"not sure"* rather than guessing.
 

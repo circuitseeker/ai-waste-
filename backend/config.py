@@ -173,9 +173,20 @@ WASTE_CLASSES = [
     # collection. With only two physical bins, DRY is the least-wrong chute, and
     # the label says "E-waste" so a human can pull it back out.
     {"prompts": ["a mobile phone", "a smartphone", "a broken cell phone",
-                 "a computer mouse", "a circuit board", "a remote control",
-                 "an LED bulb", "a resistor and a capacitor",
-                 "a broken pair of headphones", "a computer keyboard"],
+                 "a cracked phone screen", "a tablet computer",
+                 "an old feature phone", "a phone with a shattered display"],
+     "name": "Phone / tablet", "category": "E-waste",         "bin": "DRY"},
+    {"prompts": ["a laptop computer", "an open laptop", "a broken laptop",
+                 "a computer monitor", "a desktop computer tower",
+                 "a computer keyboard", "a laptop with a cracked screen"],
+     "name": "Laptop / PC",    "category": "E-waste",         "bin": "DRY"},
+    # Keep this list SHORT and visually coherent. Averaging a dozen unrelated
+    # gadgets produces a vague "generic electronics" vector that drifts towards
+    # glare and clutter: adding webcam/charger/wristwatch/bulb here dropped junk
+    # rejection from 100% to 50% on the bench. Same trap as vague stationery.
+    {"prompts": ["a computer mouse", "a circuit board", "a remote control",
+                 "a broken pair of headphones", "a pocket calculator",
+                 "a USB flash drive"],
      "name": "Electronics",    "category": "E-waste",         "bin": "DRY"},
     {"prompts": ["a battery", "AA batteries", "a button cell battery"],
      "name": "Battery",        "category": "E-waste",         "bin": "DRY"},
