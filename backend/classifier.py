@@ -21,6 +21,15 @@ import numpy as np
 from . import config
 
 
+def _clip_embed(out):
+    """
+    Return CLIP's projected embedding tensor from get_text_features /
+    get_image_features. transformers < 5 returns the tensor directly; >= 5
+    wraps it in an output object whose `.pooler_output` IS that tensor.
+    """
+    return out if hasattr(out, "norm") else out.pooler_output
+
+
 @dataclass
 class Prediction:
     label: str          # human label, e.g. "Aluminium can · Recyclable"
@@ -96,7 +105,7 @@ class Classifier:
                     text = [t.format(p) for p in phrases for t in templates]
                     tok = processor(text=text, padding=True, return_tensors="pt")
                     tok = {k: v.to(device) for k, v in tok.items()}
-                    f = model.get_text_features(**tok)
+                    f = _clip_embed(model.get_text_features(**tok))
                     f = f / f.norm(dim=-1, keepdim=True)
                     f = f.mean(dim=0)
                     per_class.append(f / f.norm())
@@ -177,7 +186,7 @@ class Classifier:
         inp = self._processor(images=rgb, return_tensors="pt")
         inp = {k: v.to(self._device) for k, v in inp.items()}
         with torch.no_grad():
-            img_feats = self._clip_model.get_image_features(**inp)
+            img_feats = _clip_embed(self._clip_model.get_image_features(**inp))
             img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
             sims = (img_feats @ self._text_feats.T).squeeze(0)
             logits = sims * self._clip_model.logit_scale.exp()

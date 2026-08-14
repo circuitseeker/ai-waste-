@@ -11,6 +11,8 @@ opencv-python==4.10.0.84
 # Windows/Linux/Intel: same `torch` install picks the right wheel.
 # transformers loads OpenAI CLIP weights (cached after first run).
 torch>=2.2
+# transformers 5.x wraps CLIP embeddings in an output object; the classifier
+# handles both, but pin a known-good range to avoid other 5.x API churn.
 transformers>=4.40
 
 # --- Legacy: local Keras model (optional, only if you train one) -------------
