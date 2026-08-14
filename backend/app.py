@@ -26,6 +26,7 @@ from . import config
 from .classifier import Classifier
 from .firebase_logger import FirebaseLogger
 from .hardware import make_hardware
+from .oled import OledDisplay
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
@@ -39,6 +40,10 @@ class State:
     def __init__(self) -> None:
         self.classifier = Classifier()
         self.hardware = make_hardware()
+        # The OLED lives on a different serial port than the camera; skip the
+        # camera's port when auto-detecting it.
+        cam_port = getattr(self.hardware, "_port", None)
+        self.oled = OledDisplay(exclude_port=cam_port)
         self.firebase = FirebaseLogger()
         self.counts: dict[str, int] = {}
         self.history: list[dict] = []
@@ -86,6 +91,7 @@ async def process_item() -> None:
     assert state is not None
     state.busy = True
     await broadcast({"type": "processing"})
+    state.oled.scanning()
     try:
         loop = asyncio.get_running_loop()
         frame = await loop.run_in_executor(None, state.hardware.capture)
@@ -100,6 +106,10 @@ async def process_item() -> None:
             # Drive the physical bin.
             await loop.run_in_executor(None, state.hardware.send_result, pred.bin)
             state.counts[pred.bin] = state.counts.get(pred.bin, 0) + 1
+            # Show category / item / bin on the OLED.
+            state.oled.show(pred.name or pred.label, pred.category or "Waste", pred.bin)
+        else:
+            state.oled.idle()
 
         event = {
             "type": "result",
@@ -162,6 +172,7 @@ async def _shutdown() -> None:
             await task
     if state:
         state.hardware.close()
+        state.oled.close()
 
 
 # ---------------------------------------------------------------------------

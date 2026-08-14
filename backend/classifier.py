@@ -38,6 +38,7 @@ class Prediction:
     scores: dict        # every class name -> score
     source: str         # "clip" | "model" | "heuristic"
     category: str = ""  # waste category, e.g. "Recyclable"
+    name: str = ""      # clean item name, e.g. "Plastic bottle" (no decoration)
 
 
 class Classifier:
@@ -243,6 +244,7 @@ class Classifier:
                 scores=scores,
                 source=source,
                 category=cls["category"],
+                name=cls["name"],
             )
 
         # Keras / heuristic path (label -> bin via config.BIN_MAP)
@@ -260,4 +262,6 @@ class Classifier:
             confidence=conf,
             scores={labels[i]: float(probs[i]) for i in range(len(labels))},
             source=source,
+            category="",   # legacy Keras/heuristic path has no category
+            name=label,
         )

@@ -29,6 +29,17 @@ SERIAL_BAUD = int(_env("SERIAL_BAUD", "921600"))
 
 
 # ---------------------------------------------------------------------------
+# OLED status display (second ESP32 running firmware/oled_display)
+# ---------------------------------------------------------------------------
+# Shows the category / waste type / bin for each detected item.
+OLED_ENABLED = _env("OLED_ENABLED", "true").lower() == "true"
+# Leave empty to auto-detect (a serial port that replies "OLED" to PING, other
+# than the camera's port). Example: /dev/cu.usbserial-0001 or COM6.
+OLED_PORT = _env("OLED_PORT", "")
+OLED_BAUD = int(_env("OLED_BAUD", "115200"))
+
+
+# ---------------------------------------------------------------------------
 # ESP32-CAM (Wi-Fi mode)
 # ---------------------------------------------------------------------------
 # The IP address the ESP32-CAM prints to the Serial Monitor when it connects
