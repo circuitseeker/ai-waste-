@@ -67,11 +67,16 @@ class OledDisplay:
                 continue
             try:
                 s = self._open(serial, dev)
-                s.write(b"PING\n")
-                # read a few lines; the board may emit boot noise first
+                # Retry PING a few times: another board's probe may have left
+                # garbage in this port's RX buffer, mangling the first ping.
                 for _ in range(4):
-                    if s.readline().decode(errors="ignore").strip() == "OLED":
-                        return s
+                    s.reset_input_buffer()
+                    s.write(b"PING\n")
+                    for _ in range(3):
+                        line = s.readline().decode(errors="ignore").strip()
+                        if line.endswith("OLED"):
+                            return s
+                    time.sleep(0.2)
                 s.close()
             except Exception:  # noqa: BLE001
                 continue
@@ -93,6 +98,24 @@ class OledDisplay:
     def show(self, name: str, category: str, bin_cmd: str) -> None:
         # Keep it clean for a 128px line; the firmware just renders what we send.
         self._send(f"SHOW:{name}|{category}|{bin_cmd}")
+
+    def distance_cm(self) -> float:
+        """Query the HC-SR04 wired to the OLED board. 999 if unavailable."""
+        if self._ser is None:
+            return 999.0
+        try:
+            self._ser.reset_input_buffer()
+            self._ser.write(b"DIST?\n")
+            for _ in range(4):
+                line = self._ser.readline().decode(errors="ignore").strip()
+                if line.startswith("DIST"):
+                    return float(line.split()[1]) / 10.0   # mm -> cm
+        except Exception:  # noqa: BLE001
+            pass
+        return 999.0
+
+    def object_present(self, threshold_cm: float) -> bool:
+        return self.distance_cm() < threshold_cm
 
     def scanning(self) -> None:
         self._send("SCAN")

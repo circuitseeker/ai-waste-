@@ -185,17 +185,19 @@ class SerialHardware(HardwareBase):
                     return m
         raise RuntimeError("image marker not found")
 
-    def object_present(self) -> bool:
+    def distance_cm(self) -> float:
         try:
             self._ser.reset_input_buffer()
             self._ser.write(b"S")
             line = self._ser.readline().decode(errors="ignore").strip()
             if line.startswith("DIST"):
-                mm = float(line.split()[1])
-                return mm / 10.0 < config.OBJECT_DISTANCE_CM
+                return float(line.split()[1]) / 10.0
         except Exception:  # noqa: BLE001
             pass
-        return False
+        return 999.0
+
+    def object_present(self) -> bool:
+        return self.distance_cm() < config.OBJECT_DISTANCE_CM
 
     def capture(self) -> np.ndarray:
         self._ser.reset_input_buffer()
