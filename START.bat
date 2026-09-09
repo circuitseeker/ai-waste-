@@ -65,7 +65,7 @@ if errorlevel 1 (
   echo This downloads about 2 GB and happens ONCE. Please wait...
   echo.
   "%VENV_PY%" -m pip install --upgrade pip
-  "%VENV_PY%" -m pip install -r requirements.txt
+  "%VENV_PY%" -m pip install --prefer-binary -r requirements.txt
   if errorlevel 1 (
     echo.
     echo [X] Install failed. Check your internet connection and run this again.

@@ -1,10 +1,13 @@
 # --- Core backend (always needed) -------------------------------------------
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-requests==2.32.3
-pyserial==3.5
-numpy==1.26.4
-opencv-python==4.10.0.84
+# Lower bounds (not exact pins) so pip installs a prebuilt WHEEL for whatever
+# Python version is present. Exact pins forced a from-source build (needing a C
+# compiler) on newer Python where the old versions had no wheel.
+fastapi>=0.110
+uvicorn[standard]>=0.30
+requests>=2.31
+pyserial>=3.5
+numpy>=1.26
+opencv-python>=4.9
 
 # --- Local ML: zero-shot CLIP (runs on your laptop, no cloud) -----------------
 # Apple Silicon: torch ships MPS wheels via PyPI directly (just `pip install torch`).
