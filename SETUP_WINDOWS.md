@@ -1,13 +1,13 @@
 # AI Waste Segregation — Windows Setup
 
-A simple, 5-step setup. Do steps 1–4 **once**. After that you only ever use **step 5**.
+Download, then run **one file**. That's it.
 
 ---
 
 ## Step 1 — Install Python (one time)
 1. Go to **https://www.python.org/downloads/**
 2. Download **Python 3.12** and open the installer.
-3. ⚠️ **Tick the box "Add Python to PATH"** at the bottom, then click **Install Now**.
+3. ⚠️ **Tick "Add Python to PATH"** at the bottom, then click **Install Now**.
 
 ## Step 2 — Install the USB drivers (one time)
 So Windows can see the device when you plug it in:
@@ -16,21 +16,18 @@ So Windows can see the device when you plug it in:
 
 Install both, then **restart the PC**.
 
-## Step 3 — Get the project
+## Step 3 — Download the project
 - Go to **https://github.com/circuitseeker/ai-waste-**
 - Click the green **Code** button → **Download ZIP**.
-- **Right-click the ZIP → Extract All.** Remember the folder.
+- **Right-click the ZIP → Extract All.**
 
-## Step 4 — Install (one time)
-Open the extracted folder and **double-click `setup.bat`**.
-- A black window opens and installs everything (first time downloads ~2 GB — leave it running).
-- Wait until it says **"Setup complete!"**, then close it.
-
-## Step 5 — Run it (every time)
+## Step 4 — Run it
 1. **Plug the device into the PC** with its USB cable(s).
-2. **Double-click `run.bat`.**
-3. Wait ~15 seconds for **"Ready"**.
-4. **Hold a piece of waste in front of the sensor** — the camera reads it, the screen shows the type, and the servos sort it into the right bin.
+2. Open the extracted folder and **double-click `START.bat`**.
+
+That's all. The **first time**, it installs everything automatically (downloads ~2 GB — leave it running). **Every time after**, it just starts in ~15 seconds.
+
+It shows the connected COM ports, finds the **ESP32-CAM** and the **ESP32 board** on its own, and begins. **Hold a piece of waste near the sensor** — the screen shows the type and the servos sort it into the right bin.
 
 To stop: close the window.
 
@@ -40,9 +37,9 @@ To stop: close the window.
 
 | What you see | What to do |
 |---|---|
-| "Python was not found" | Redo **Step 1** and make sure you ticked **Add Python to PATH**. |
-| The device isn't detected | Redo **Step 2** (drivers), unplug and replug the USB, restart. |
-| "no serial port found" | Close any Arduino window, unplug/replug the device, run `run.bat` again. |
-| Nothing happens at the sensor | Make sure the item is **within ~10 cm** of the sensor and the area is well lit. |
+| "Python is not installed" | Redo **Step 1**, making sure you ticked **Add Python to PATH**. |
+| "Connected COM ports: (none…)" | Redo **Step 2** (drivers), unplug/replug the USB, restart the PC. |
+| "no serial port found" | Close any Arduino window (only one program can use a COM port), replug, run `START.bat` again. |
+| Nothing happens at the sensor | Keep the item **within ~10 cm** of the sensor, and make sure the area is well lit. |
 
 **Need help?** Contact circuitseeker.
