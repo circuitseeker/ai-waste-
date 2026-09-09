@@ -58,7 +58,7 @@ set "VENV_PY=.venv\Scripts\python.exe"
 REM ---- Make sure the packages are ACTUALLY installed ----
 REM (a half-finished earlier setup can leave a .venv with no packages, so we
 REM  verify by importing them, not just by the folder existing.)
-"%VENV_PY%" -c "import numpy, cv2, fastapi, serial, torch, transformers" >nul 2>nul
+"%VENV_PY%" -c "import numpy, cv2, fastapi, serial, torch, transformers, PIL" >nul 2>nul
 if errorlevel 1 (
   echo.
   echo First-time setup: installing everything.
@@ -73,7 +73,7 @@ if errorlevel 1 (
     exit /b 1
   )
   REM verify again
-  "%VENV_PY%" -c "import numpy, cv2, fastapi, serial, torch, transformers" >nul 2>nul
+  "%VENV_PY%" -c "import numpy, cv2, fastapi, serial, torch, transformers, PIL" >nul 2>nul
   if errorlevel 1 (
     echo [X] Some packages are still missing. Delete the .venv folder and run again.
     pause

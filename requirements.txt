@@ -8,6 +8,7 @@ requests>=2.31
 pyserial>=3.5
 numpy>=1.26
 opencv-python>=4.9
+Pillow>=10          # CLIP's image processor needs this (PIL backend)
 
 # --- Local ML: zero-shot CLIP (runs on your laptop, no cloud) -----------------
 # Apple Silicon: torch ships MPS wheels via PyPI directly (just `pip install torch`).
